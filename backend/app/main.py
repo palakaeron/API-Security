@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
+from app.database import get_engine
 
 settings = get_settings()
 
@@ -49,8 +50,6 @@ def health() -> dict[str, str]:
 
 @app.post("/discovery/import", tags=["discovery"])
 def import_discovery(request: DiscoveryImportRequest) -> dict[str, int | str]:
-    from sqlalchemy import create_engine
-
     from app.discovery.models import ImportValidationError
     from app.discovery.parsers import parse_openapi, parse_postman
     from app.discovery.persistence import import_endpoints
@@ -73,7 +72,7 @@ def import_discovery(request: DiscoveryImportRequest) -> dict[str, int | str]:
         ) from exc
 
     count = import_endpoints(
-        create_engine(settings.database_url), request.api_id, endpoints, source
+        get_engine(settings.database_url), request.api_id, endpoints, source
     )
     return {"imported": count, "source": source}
 
@@ -86,8 +85,6 @@ def record_traffic(request: TrafficRecordRequest) -> dict[str, int]:
     then stored as a ``source='traffic'`` endpoint row.  Duplicate rows (same
     api_id + path + method) are silently skipped due to the upsert strategy.
     """
-    from sqlalchemy import create_engine
-
     from app.discovery.models import DiscoveredEndpoint
     from app.discovery.persistence import import_endpoints
 
@@ -119,7 +116,7 @@ def record_traffic(request: TrafficRecordRequest) -> dict[str, int]:
         )
 
     count = import_endpoints(
-        create_engine(settings.database_url), request.api_id, endpoints, "traffic"
+        get_engine(settings.database_url), request.api_id, endpoints, "traffic"
     )
     return {"recorded": count}
 
@@ -131,11 +128,9 @@ def get_diff(api_id: int) -> dict[str, object]:
     - **shadow**: endpoints seen in captured traffic but not declared in the spec.
     - **zombie**: deprecated spec endpoints that have also appeared in traffic.
     """
-    from sqlalchemy import create_engine
-
     from app.discovery.diff import diff_endpoints
 
-    result = diff_endpoints(create_engine(settings.database_url), api_id)
+    result = diff_endpoints(get_engine(settings.database_url), api_id)
     return {
         "api_id": result.api_id,
         "shadow": [{"path": e.path, "method": e.method} for e in result.shadow],

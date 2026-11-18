@@ -2,58 +2,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import (
-    JSON,
-    Boolean,
-    Column,
-    Engine,
-    Integer,
-    MetaData,
-    String,
-    Table,
-    UniqueConstraint,
-    func,
-    select,
-)
+from sqlalchemy import Engine, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from app.database import Base
 from app.discovery.models import DiscoveredEndpoint
+from app.models import Endpoint
 
-metadata = MetaData()
-endpoint_table = Table(
-    "endpoints",
-    metadata,
-    # This definition mirrors migrations 0001–0003 and remains SQLite/PostgreSQL portable.
-    Column("id", Integer, primary_key=True),
-    Column("api_id", Integer, nullable=False),
-    Column("path", String(2048), nullable=False),
-    Column("method", String(10), nullable=False),
-    Column("auth_scheme", String(100)),
-    Column("source", String(32), nullable=False),
-    Column("parameters", JSON),
-    Column("request_schema", JSON),
-    Column("response_schemas", JSON),
-    Column("deprecated", Boolean, nullable=False, server_default="0"),
-    Column("seen_in_traffic", Boolean, nullable=False, server_default="0"),
-    UniqueConstraint("api_id", "path", "method", name="uq_endpoints_api_path_method"),
-)
+metadata = Base.metadata
+endpoint_table = Endpoint.__table__
 
 
 def import_endpoints(
     engine: Engine, api_id: int, endpoints: list[DiscoveredEndpoint], source: str
 ) -> int:
-    """Insert or update discovered endpoints.
-
-    Behaviour by source:
-    - ``spec`` / ``postman``: insert new rows only (skip duplicates).
-    - ``traffic``: insert new rows; for endpoints that already exist in the
-      declared spec, update ``seen_in_traffic=True`` on the existing row.
-      This preserves the original ``source`` value while still recording that
-      the endpoint was observed in live traffic — which is what the zombie
-      detector needs.
-
-    Returns the number of new rows actually inserted (updates not counted).
-    """
+    """Insert or update discovered endpoints using shared model metadata."""
     if source not in {"spec", "postman", "traffic"}:
         raise ValueError("source must be spec, postman, or traffic")
     if not endpoints:
@@ -61,14 +24,12 @@ def import_endpoints(
 
     if source in {"spec", "postman"}:
         return _insert_declared(engine, api_id, endpoints, source)
-    else:
-        return _insert_traffic(engine, api_id, endpoints)
+    return _insert_traffic(engine, api_id, endpoints)
 
 
 def _insert_declared(
     engine: Engine, api_id: int, endpoints: list[DiscoveredEndpoint], source: str
 ) -> int:
-    """Insert spec/postman rows, skipping any that already exist."""
     rows = [
         {
             "api_id": api_id,
@@ -87,28 +48,20 @@ def _insert_declared(
     stmt = sqlite_insert(endpoint_table).values(rows).on_conflict_do_nothing()
     with engine.begin() as connection:
         before_count = connection.execute(
-            select(func.count()).select_from(endpoint_table).where(
-                endpoint_table.c.api_id == api_id
-            )
+            select(func.count())
+            .select_from(endpoint_table)
+            .where(endpoint_table.c.api_id == api_id)
         ).scalar_one()
         connection.execute(stmt)
         after_count = connection.execute(
-            select(func.count()).select_from(endpoint_table).where(
-                endpoint_table.c.api_id == api_id
-            )
+            select(func.count())
+            .select_from(endpoint_table)
+            .where(endpoint_table.c.api_id == api_id)
         ).scalar_one()
     return after_count - before_count
 
 
 def _insert_traffic(engine: Engine, api_id: int, endpoints: list[DiscoveredEndpoint]) -> int:
-    """Process traffic-observed endpoints.
-
-    For each observed (method, path):
-    - If a row already exists for (api_id, path, method): update seen_in_traffic=True.
-    - If no row exists: insert a new row with source='traffic'.
-
-    Returns the number of new rows inserted.
-    """
     rows = [
         {
             "api_id": api_id,
@@ -124,7 +77,6 @@ def _insert_traffic(engine: Engine, api_id: int, endpoints: list[DiscoveredEndpo
         }
         for item in endpoints
     ]
-    # ON CONFLICT: if (api_id, path, method) already exists, just set seen_in_traffic=True.
     stmt = (
         sqlite_insert(endpoint_table)
         .values(rows)
@@ -135,15 +87,15 @@ def _insert_traffic(engine: Engine, api_id: int, endpoints: list[DiscoveredEndpo
     )
     with engine.begin() as connection:
         before_count = connection.execute(
-            select(func.count()).select_from(endpoint_table).where(
-                endpoint_table.c.api_id == api_id
-            )
+            select(func.count())
+            .select_from(endpoint_table)
+            .where(endpoint_table.c.api_id == api_id)
         ).scalar_one()
         connection.execute(stmt)
         after_count = connection.execute(
-            select(func.count()).select_from(endpoint_table).where(
-                endpoint_table.c.api_id == api_id
-            )
+            select(func.count())
+            .select_from(endpoint_table)
+            .where(endpoint_table.c.api_id == api_id)
         ).scalar_one()
     return after_count - before_count
 
