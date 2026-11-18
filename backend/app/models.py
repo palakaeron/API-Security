@@ -1,8 +1,4 @@
-"""SQLAlchemy models matching the current Alembic schema.
-
-CRUD routes and scan orchestration are intentionally deferred to later
-milestones; this module establishes the shared relational foundation.
-"""
+"""SQLAlchemy models for the API security platform."""
 
 from __future__ import annotations
 
@@ -138,19 +134,24 @@ class Scan(Base):
     __table_args__ = (
         Index("ix_scans_api_id_started_at", "api_id", "started_at"),
         CheckConstraint(
-            "status IN ('queued', 'running', 'completed', 'failed')", name="ck_scans_status"
+            "status IN ('pending', 'running', 'completed', 'failed', 'cancelled')",
+            name="ck_scans_status",
         ),
         CheckConstraint("score IS NULL OR (score >= 0 AND score <= 100)", name="ck_scans_score"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     api_id: Mapped[int] = mapped_column(ForeignKey("apis.id", ondelete="CASCADE"), nullable=False)
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.current_timestamp()
-    )
-    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="queued")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
     score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     job_id: Mapped[str | None] = mapped_column(String(255))
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_summary: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.current_timestamp()
+    )
 
     api: Mapped[Api] = relationship(back_populates="scans")
     findings: Mapped[list[Finding]] = relationship(
@@ -249,14 +250,18 @@ class ScanHistory(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     api_id: Mapped[int] = mapped_column(ForeignKey("apis.id", ondelete="CASCADE"), nullable=False)
+    scan_id: Mapped[int | None] = mapped_column(ForeignKey("scans.id", ondelete="CASCADE"))
     previous_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
-    current_score: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
-    delta: Mapped[Decimal] = mapped_column(Numeric(6, 2), nullable=False)
+    current_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    delta: Mapped[Decimal | None] = mapped_column(Numeric(6, 2))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
+    event: Mapped[str] = mapped_column(String(64), nullable=False, server_default="created")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.current_timestamp()
     )
 
     api: Mapped[Api] = relationship(back_populates="scan_history")
+    scan: Mapped[Scan | None] = relationship()
 
 
 class Alert(Base):

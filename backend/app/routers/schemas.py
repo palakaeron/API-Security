@@ -123,6 +123,50 @@ class EndpointListResponse(BaseModel):
     offset: int
 
 
+class ScanCreate(BaseModel):
+    detectors: list[Literal["misconfiguration"]] = Field(
+        default_factory=lambda: ["misconfiguration"], min_length=1
+    )
+
+
+class ScanRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    api_id: int
+    status: Literal["pending", "running", "completed", "failed", "cancelled"]
+    configuration: dict
+    started_at: datetime | None
+    completed_at: datetime | None
+    error_summary: str | None
+    created_at: datetime
+
+
+class ScanListResponse(BaseModel):
+    items: list[ScanRead]
+    total: int
+    limit: int
+    offset: int
+
+
+class ScanHistoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scan_id: int | None
+    api_id: int
+    status: str
+    event: str
+    previous_score: float | None
+    current_score: float | None
+    delta: float | None
+    created_at: datetime
+
+
+class ScanHistoryListResponse(BaseModel):
+    items: list[ScanHistoryRead]
+
+
 class DiscoveryImportRequest(BaseModel):
     format: Literal["openapi", "postman"]
     content: str = Field(min_length=2)

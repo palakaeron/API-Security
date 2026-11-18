@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.database import get_engine, get_session_factory
 from app.models import Api
-from app.routers import apis, projects
+from app.routers import apis, projects, scans
 
 settings = get_settings()
 
@@ -64,6 +64,7 @@ app.add_middleware(
 
 app.include_router(projects.router)
 app.include_router(apis.router)
+app.include_router(scans.router)
 
 
 def _require_api_exists(api_id: int) -> None:
