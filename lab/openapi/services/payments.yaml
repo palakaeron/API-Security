@@ -1,0 +1,7 @@
+openapi: 3.0.3
+info: {title: Payments Lab API, version: 1.0.0}
+security: [{bearer: []}]
+components: {securitySchemes: {bearer: {type: http, scheme: bearer}}}
+paths:
+  /vuln/payments/{user_id}: {get: {responses: {'200': {description: payment}}}}
+  /secure/payments/{user_id}: {get: {responses: {'200': {description: payment}}}}

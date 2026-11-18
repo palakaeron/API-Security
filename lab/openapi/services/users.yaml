@@ -1,0 +1,9 @@
+openapi: 3.0.3
+info: {title: Users Lab API, version: 1.0.0}
+security: [{bearer: []}]
+components: {securitySchemes: {bearer: {type: http, scheme: bearer}}}
+paths:
+  /vuln/users/{user_id}: {get: {responses: {'200': {description: user}}}}
+  /secure/users/{user_id}: {get: {responses: {'200': {description: user}}}}
+  /vuln/profiles/{user_id}: {get: {responses: {'200': {description: profile}}}, patch: {responses: {'200': {description: profile}}}}
+  /secure/profiles/{user_id}: {get: {responses: {'200': {description: profile}}}, patch: {responses: {'200': {description: profile}}}}

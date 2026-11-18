@@ -1,0 +1,119 @@
+{
+  "info": {
+    "name": "Users Lab",
+    "description": "Postman v2.1 collection for the synthetic Users lab service (port 8102). Covers /vuln/users, /secure/users, /vuln/profiles, and /secure/profiles — all 6 operations. All requests require a bearer JWT (bearer_jwt auth scheme).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Vulnerable – Get user (BOLA target)",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "url": {
+              "raw": "http://127.0.0.1:8102/vuln/users/{{user_id}}",
+              "protocol": "http",
+              "host": ["127", "0", "0", "1"],
+              "port": "8102",
+              "path": ["vuln", "users", "{{user_id}}"],
+              "variable": [{ "key": "user_id", "value": "alice" }]
+            }
+          }
+        },
+        {
+          "name": "Secure – Get user (ownership enforced)",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "url": {
+              "raw": "http://127.0.0.1:8102/secure/users/{{user_id}}",
+              "protocol": "http",
+              "host": ["127", "0", "0", "1"],
+              "port": "8102",
+              "path": ["secure", "users", "{{user_id}}"],
+              "variable": [{ "key": "user_id", "value": "alice" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Profiles",
+      "item": [
+        {
+          "name": "Vulnerable – Get profile (BOPLA read target)",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "url": {
+              "raw": "http://127.0.0.1:8102/vuln/profiles/{{user_id}}",
+              "protocol": "http",
+              "host": ["127", "0", "0", "1"],
+              "port": "8102",
+              "path": ["vuln", "profiles", "{{user_id}}"],
+              "variable": [{ "key": "user_id", "value": "alice" }]
+            }
+          }
+        },
+        {
+          "name": "Vulnerable – Update profile (BOPLA write target)",
+          "request": {
+            "method": "PATCH",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"display_name\": \"Updated Name\"}"
+            },
+            "url": {
+              "raw": "http://127.0.0.1:8102/vuln/profiles/{{user_id}}",
+              "protocol": "http",
+              "host": ["127", "0", "0", "1"],
+              "port": "8102",
+              "path": ["vuln", "profiles", "{{user_id}}"],
+              "variable": [{ "key": "user_id", "value": "alice" }]
+            }
+          }
+        },
+        {
+          "name": "Secure – Get profile (ownership enforced)",
+          "request": {
+            "method": "GET",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "url": {
+              "raw": "http://127.0.0.1:8102/secure/profiles/{{user_id}}",
+              "protocol": "http",
+              "host": ["127", "0", "0", "1"],
+              "port": "8102",
+              "path": ["secure", "profiles", "{{user_id}}"],
+              "variable": [{ "key": "user_id", "value": "alice" }]
+            }
+          }
+        },
+        {
+          "name": "Secure – Update profile (own display name only)",
+          "request": {
+            "method": "PATCH",
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }] },
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"display_name\": \"Updated Name\"}"
+            },
+            "url": {
+              "raw": "http://127.0.0.1:8102/secure/profiles/{{user_id}}",
+              "protocol": "http",
+              "host": ["127", "0", "0", "1"],
+              "port": "8102",
+              "path": ["secure", "profiles", "{{user_id}}"],
+              "variable": [{ "key": "user_id", "value": "alice" }]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

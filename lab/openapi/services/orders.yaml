@@ -1,0 +1,7 @@
+openapi: 3.0.3
+info: {title: Orders Lab API, version: 1.0.0}
+security: [{bearer: []}]
+components: {securitySchemes: {bearer: {type: http, scheme: bearer}}}
+paths:
+  /vuln/orders/{order_id}: {get: {responses: {'200': {description: order}}}}
+  /secure/orders/{order_id}: {get: {responses: {'200': {description: order}}}}

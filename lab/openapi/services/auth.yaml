@@ -1,0 +1,6 @@
+openapi: 3.0.3
+info: {title: Auth Lab API, version: 1.0.0}
+components: {securitySchemes: {bearer: {type: http, scheme: bearer}}}
+paths:
+  /vuln/auth/token: {post: {responses: {'200': {description: token}}}}
+  /secure/auth/token: {post: {responses: {'200': {description: token}}}}

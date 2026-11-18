@@ -1,0 +1,5 @@
+openapi: 3.0.3
+info: {title: GraphQL Lab API, version: 1.0.0}
+paths:
+  /vuln/graphql: {post: {responses: {'200': {description: graphql}}}}
+  /secure/graphql: {post: {responses: {'200': {description: graphql}}}}

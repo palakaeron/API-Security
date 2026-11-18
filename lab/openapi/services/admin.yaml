@@ -1,0 +1,7 @@
+openapi: 3.0.3
+info: {title: Admin Lab API, version: 1.0.0}
+security: [{bearer: []}]
+components: {securitySchemes: {bearer: {type: http, scheme: bearer}}}
+paths:
+  /vuln/admin/audit: {get: {responses: {'200': {description: audit}}}}
+  /secure/admin/audit: {get: {responses: {'200': {description: audit}}}}

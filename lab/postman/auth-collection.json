@@ -1,0 +1,49 @@
+{
+  "info": {
+    "name": "Auth Lab",
+    "description": "Postman v2.1 collection for the synthetic Auth lab service (port 8101). Covers both the intentionally-weak /vuln endpoint and the hardened /secure endpoint so the Postman import round-trip can be validated against the OpenAPI spec.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Vulnerable – Issue token (weak JWT)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "http://127.0.0.1:8101/vuln/auth/token",
+          "protocol": "http",
+          "host": ["127", "0", "0", "1"],
+          "port": "8101",
+          "path": ["vuln", "auth", "token"]
+        },
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\": \"alice\", \"password\": \"synthetic-password\"}"
+        }
+      }
+    },
+    {
+      "name": "Secure – Issue token (hardened JWT)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "http://127.0.0.1:8101/secure/auth/token",
+          "protocol": "http",
+          "host": ["127", "0", "0", "1"],
+          "port": "8101",
+          "path": ["secure", "auth", "token"]
+        },
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\"username\": \"alice\", \"password\": \"synthetic-password\"}"
+        }
+      }
+    }
+  ]
+}

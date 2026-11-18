@@ -1,0 +1,288 @@
+openapi: 3.0.3
+info:
+  title: Synthetic API Security Lab — Public Contract
+  description: >
+    Combined public surface of the synthetic lab. Intentionally excludes
+    /internal/diagnostics (shadow endpoint) to enable shadow-diff testing.
+    /v1/users/{user_id} is deprecated but intentionally left reachable for
+    zombie-diff testing. All data is synthetic.
+  version: 1.0.0
+servers:
+  - url: http://127.0.0.1:8101
+    description: Auth service
+  - url: http://127.0.0.1:8102
+    description: Users service
+  - url: http://127.0.0.1:8103
+    description: Admin service
+  - url: http://127.0.0.1:8104
+    description: Payments service
+  - url: http://127.0.0.1:8105
+    description: Orders service
+  - url: http://127.0.0.1:8106
+    description: Inventory / deprecated v1 service
+  - url: http://127.0.0.1:8107
+    description: GraphQL service
+security:
+  - bearer: []
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+paths:
+
+  # ── Health ──────────────────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [system]
+      summary: Health check (all services)
+      security: []
+      responses:
+        '200': { description: Service is alive }
+
+  # ── Auth ─────────────────────────────────────────────────────────────────
+  /vuln/auth/token:
+    post:
+      tags: [auth, vulnerable]
+      summary: Issue a deliberately weak JWT (known secret, 10-year expiry)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, enum: [alice, bob, admin] }
+                password: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Vulnerable lab token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  token_type: { type: string }
+        '404': { description: Unknown username }
+
+  /secure/auth/token:
+    post:
+      tags: [auth, secure]
+      summary: Issue a hardened JWT (env-supplied secret, 15-min expiry, iss/aud required)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, enum: [alice, bob, admin] }
+                password: { type: string, minLength: 1 }
+      responses:
+        '200':
+          description: Secure lab token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token: { type: string }
+                  token_type: { type: string }
+        '503': { description: Secure JWT secret not configured }
+
+  # ── Users ────────────────────────────────────────────────────────────────
+  /vuln/users/{user_id}:
+    get:
+      tags: [users, vulnerable]
+      summary: Fetch user object without ownership check (BOLA target)
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Full user object }
+        '404': { description: Unknown user }
+
+  /secure/users/{user_id}:
+    get:
+      tags: [users, secure]
+      summary: Fetch user object with ownership enforcement
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Public profile only }
+        '403': { description: Cross-user access denied }
+        '404': { description: Unknown user }
+
+  # ── Profiles ─────────────────────────────────────────────────────────────
+  /vuln/profiles/{user_id}:
+    get:
+      tags: [profiles, vulnerable]
+      summary: Read full profile including sensitive properties (BOPLA target)
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Full profile with support_pin }
+        '404': { description: Unknown user }
+    patch:
+      tags: [profiles, vulnerable]
+      summary: Write any profile property including role (BOPLA write target)
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string, maxLength: 80 }
+                support_pin: { type: string, pattern: '^\d{4}$' }
+                role: { type: string, enum: [user, admin] }
+      responses:
+        '200': { description: Updated user object }
+        '404': { description: Unknown user }
+
+  /secure/profiles/{user_id}:
+    get:
+      tags: [profiles, secure]
+      summary: Read public profile only (ownership enforced)
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Public profile }
+        '403': { description: Cross-user access denied }
+    patch:
+      tags: [profiles, secure]
+      summary: Update own display name only (no role escalation)
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: { type: string, maxLength: 80 }
+      responses:
+        '200': { description: Updated public profile }
+        '403': { description: Cross-user access denied }
+
+  # ── Admin ─────────────────────────────────────────────────────────────────
+  /vuln/admin/audit:
+    get:
+      tags: [admin, vulnerable]
+      summary: Admin audit log with no role check (BFLA target)
+      responses:
+        '200': { description: Synthetic audit log }
+
+  /secure/admin/audit:
+    get:
+      tags: [admin, secure]
+      summary: Admin audit log requiring admin role
+      responses:
+        '200': { description: Synthetic audit log }
+        '403': { description: Admin role required }
+
+  # ── Payments ──────────────────────────────────────────────────────────────
+  /vuln/payments/{user_id}:
+    get:
+      tags: [payments, vulnerable]
+      summary: Read full payment object without ownership check (sensitive BOLA target)
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Full payment object including balance }
+        '404': { description: Unknown user }
+
+  /secure/payments/{user_id}:
+    get:
+      tags: [payments, secure]
+      summary: Read masked payment reference only (ownership enforced)
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Masked account reference }
+        '403': { description: Payment ownership required }
+
+  # ── Orders ────────────────────────────────────────────────────────────────
+  /vuln/orders/{order_id}:
+    get:
+      tags: [orders, vulnerable]
+      summary: Read order without ownership check (BOLA target)
+      parameters:
+        - { name: order_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Full order object }
+        '404': { description: Unknown order }
+
+  /secure/orders/{order_id}:
+    get:
+      tags: [orders, secure]
+      summary: Read order with ownership enforcement
+      parameters:
+        - { name: order_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Order object (own or admin) }
+        '403': { description: Order ownership required }
+        '404': { description: Unknown order }
+
+  # ── Deprecated v1 (zombie target) ────────────────────────────────────────
+  /v1/users/{user_id}:
+    get:
+      tags: [deprecated, inventory]
+      deprecated: true
+      summary: >
+        Deprecated v1 user endpoint — intentionally left reachable to serve as
+        a zombie-endpoint detection target. Any traffic hit here should be
+        flagged as Improper Inventory Management.
+      security: []
+      parameters:
+        - { name: user_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Public profile (deprecated response shape) }
+        '404': { description: Unknown user }
+
+  # ── GraphQL ───────────────────────────────────────────────────────────────
+  /vuln/graphql:
+    post:
+      tags: [graphql, vulnerable]
+      summary: GraphQL endpoint with introspection enabled (detection target)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string, minLength: 1, maxLength: 4000 }
+      responses:
+        '200': { description: GraphQL response (may include introspection schema) }
+
+  /secure/graphql:
+    post:
+      tags: [graphql, secure]
+      summary: GraphQL endpoint with introspection disabled
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string, minLength: 1, maxLength: 4000 }
+      responses:
+        '200': { description: GraphQL response }
+        '403': { description: Introspection query rejected }
+
+  # NOTE: /internal/diagnostics is intentionally absent from this public
+  # contract. It is reachable at runtime (http://127.0.0.1:8106) but is not
+  # declared here, making it a shadow endpoint for detection tests.

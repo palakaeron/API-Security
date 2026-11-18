@@ -1,0 +1,10 @@
+alembic==1.14.1
+fastapi==0.141.1
+httpx==0.28.1
+jsonschema==4.25.1
+pydantic-settings==2.7.1
+PyJWT==2.13.0
+PyYAML==6.0.3
+SQLAlchemy==2.0.36
+starlette==1.6.0
+uvicorn[standard]==0.34.0
