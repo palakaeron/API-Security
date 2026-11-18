@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.database import get_engine, get_session_factory
 from app.models import Api
 from app.routers import apis, projects, scans
+from app.scan_runner import reconcile_interrupted_scans
 
 settings = get_settings()
 
@@ -65,6 +66,11 @@ app.add_middleware(
 app.include_router(projects.router)
 app.include_router(apis.router)
 app.include_router(scans.router)
+
+
+@app.on_event("startup")
+def recover_interrupted_scans() -> None:
+    reconcile_interrupted_scans()
 
 
 def _require_api_exists(api_id: int) -> None:

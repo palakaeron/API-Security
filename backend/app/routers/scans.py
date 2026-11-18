@@ -7,14 +7,20 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Api, Scan, ScanHistory
+from app.models import Api, Endpoint, Scan, ScanHistory
 from app.routers.schemas import (
     ScanCreate,
     ScanHistoryListResponse,
     ScanListResponse,
     ScanRead,
 )
-from app.scan_runner import cancel_scan, submit_scan
+from app.scan_runner import (
+    cancel_scan,
+    discard_runtime_config,
+    register_runtime_config,
+    submit_scan,
+    validate_scan_inventory,
+)
 
 router = APIRouter(tags=["scans"])
 DbSession = Annotated[Session, Depends(get_db)]
@@ -35,11 +41,23 @@ def _get_scan(db: Session, scan_id: int) -> Scan:
 def create_scan(api_id: int, payload: ScanCreate, db: DbSession) -> Scan:
     if db.get(Api, api_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="api not found")
-    scan = Scan(api_id=api_id, configuration=payload.model_dump())
+    endpoints = list(
+        db.scalars(select(Endpoint).where(Endpoint.api_id == api_id).order_by(Endpoint.id))
+    )
+    runtime_config = payload.runtime_config()
+    validation_error = validate_scan_inventory(payload.detectors, runtime_config, endpoints)
+    if validation_error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=validation_error,
+        )
+    scan = Scan(api_id=api_id, configuration={"detectors": payload.detectors})
     db.add(scan)
     db.commit()
     db.refresh(scan)
+    register_runtime_config(scan.id, runtime_config)
     if not submit_scan(scan.id):
+        discard_runtime_config(scan.id)
         scan.status = "failed"
         scan.error_summary = "scan could not be scheduled"
         db.commit()

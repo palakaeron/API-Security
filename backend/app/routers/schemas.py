@@ -2,10 +2,43 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
+
+DetectorName = Literal[
+    "bola",
+    "bfla",
+    "bopla",
+    "broken_auth",
+    "jwt_analyzer",
+    "misconfiguration",
+]
+_SAFE_PATH_PARAMETER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~-]{0,199}\Z")
+
+
+def _validate_path(value: str | None) -> str | None:
+    if value is not None and (not value.startswith("/") or value.startswith("//")):
+        raise ValueError("detector paths must be relative paths beginning with a single '/'")
+    return value
+
+
+def _validate_path_parameter(value: str | None) -> str | None:
+    if value in (None, ""):
+        return value
+    if _SAFE_PATH_PARAMETER.fullmatch(value) is None:
+        raise ValueError("path parameters must contain only safe identifier characters")
+    return value
 
 
 def _validate_base_url(value: AnyHttpUrl | None) -> AnyHttpUrl | None:
@@ -124,9 +157,87 @@ class EndpointListResponse(BaseModel):
 
 
 class ScanCreate(BaseModel):
-    detectors: list[Literal["misconfiguration"]] = Field(
+    detectors: list[DetectorName] = Field(
         default_factory=lambda: ["misconfiguration"], min_length=1
     )
+    detector_config: dict[DetectorName, DetectorConfig] = Field(default_factory=dict)
+
+    @field_validator("detectors")
+    @classmethod
+    def unique_detectors(cls, value: list[DetectorName]) -> list[DetectorName]:
+        if len(value) != len(set(value)):
+            raise ValueError("detectors must not contain duplicates")
+        return value
+
+    @model_validator(mode="after")
+    def validate_detector_config(self) -> ScanCreate:
+        configured = set(self.detector_config)
+        requested = set(self.detectors)
+        if configured - requested:
+            raise ValueError("detector_config may only configure requested detectors")
+        for detector in requested - {"misconfiguration"}:
+            if detector not in configured:
+                raise ValueError(f"detector '{detector}' requires detector_config")
+        return self
+
+    def runtime_config(self) -> dict[str, dict[str, object]]:
+        result: dict[str, dict[str, object]] = {}
+        for detector, config in self.detector_config.items():
+            values = config.model_dump()
+            for field in (
+                "attacker_token",
+                "regular_user_token",
+                "valid_token",
+                "username",
+                "password",
+            ):
+                secret = values.get(field)
+                if isinstance(secret, SecretStr):
+                    values[field] = secret.get_secret_value()
+            result[detector] = values
+        return result
+
+
+class DetectorConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    endpoint_path: str | None = None
+    admin_endpoint_path: str | None = None
+    read_path: str | None = None
+    write_path: str | None = None
+    auth_path: str | None = None
+    protected_path: str | None = None
+    protected_path_param: str = ""
+    path_param: str = ""
+    victim_id: str | None = Field(default=None, min_length=1, max_length=200)
+    victim_id_field: str = Field(default="id", min_length=1, max_length=100)
+    attacker_token: SecretStr | None = Field(default=None, min_length=1)
+    regular_user_token: SecretStr | None = Field(default=None, min_length=1)
+    valid_token: SecretStr | None = Field(default=None, min_length=1)
+    username: str | None = Field(default=None, min_length=1, max_length=200)
+    password: SecretStr | None = Field(default=None, min_length=1)
+    graphql_path: str | None = None
+
+    @field_validator(
+        "endpoint_path",
+        "admin_endpoint_path",
+        "read_path",
+        "write_path",
+        "auth_path",
+        "protected_path",
+        "graphql_path",
+    )
+    @classmethod
+    def validate_paths(cls, value: str | None) -> str | None:
+        return _validate_path(value)
+
+    @field_validator("victim_id", "path_param", "protected_path_param")
+    @classmethod
+    def validate_path_parameters(cls, value: str | None) -> str | None:
+        return _validate_path_parameter(value)
+
+
+ScanCreate.model_rebuild()
 
 
 class ScanRead(BaseModel):
@@ -139,6 +250,7 @@ class ScanRead(BaseModel):
     started_at: datetime | None
     completed_at: datetime | None
     error_summary: str | None
+    detector_results: list[dict]
     created_at: datetime
 
 

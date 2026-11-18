@@ -16,6 +16,9 @@ class Base(DeclarativeBase):
     """Base class for all runtime database models."""
 
 
+SQLITE_BUSY_TIMEOUT_MS = 5_000
+
+
 def _engine_kwargs(database_url: str) -> dict[str, object]:
     if database_url.startswith("sqlite"):
         return {"connect_args": {"check_same_thread": False}}
@@ -34,6 +37,7 @@ def get_engine(database_url: str | None = None) -> Engine:
         def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
             cursor.close()
 
     return engine

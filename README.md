@@ -9,7 +9,7 @@ Docker, Docker Compose, PostgreSQL, Redis, and Celery are optional future stretc
 - FastAPI + Uvicorn backend;
 - SQLite database at `./api-security.db` by default;
 - React + Tailwind frontend started by Vite;
-- FastAPI `BackgroundTasks`/`asyncio` for future MVP scan jobs;
+- FastAPI + Uvicorn with a process-local `ThreadPoolExecutor` for scan jobs;
 - synthetic vulnerable-lab API domains, each bound to a different loopback port.
 
 ## Setup on a fresh machine
@@ -33,7 +33,7 @@ Docker, Docker Compose, PostgreSQL, Redis, and Celery are optional future stretc
    python -m pip install -r backend/requirements-dev.txt
    Set-Location backend
    alembic upgrade head
-   uvicorn app.main:app --host 127.0.0.1 --port 8000
+   python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1
    ```
 
 5. In a second terminal, install and run the frontend:
@@ -43,6 +43,19 @@ Docker, Docker Compose, PostgreSQL, Redis, and Celery are optional future stretc
    npm ci
    npm run dev
    ```
+
+## Scan execution deployment mode
+
+The current scan runner is intentionally supported as a single-process development deployment:
+
+- Scan execution uses a process-local `ThreadPoolExecutor`; it is not a distributed job queue.
+- Runtime detector configuration, including authorized credentials and tokens, exists only in that process's memory and is never reconstructed from the database.
+- Start FastAPI with exactly one worker. The supported command is `python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`.
+- If the process is lost, pending and running scans cannot resume. Startup reconciliation marks them failed with a sanitized explanation instead.
+- Startup reconciliation assumes that only the intended single worker is running. Multiple workers can independently reconcile the same database and are not supported by this implementation.
+- SQLite is intended for local development and low-concurrency testing, not high-concurrency production deployment.
+
+Multi-worker deployment requires a future shared job coordinator, durable runtime-input handling that does not expose secrets, and worker ownership/lease coordination. Do not run this scanner with multiple FastAPI workers until those safeguards exist.
 
 6. In a third terminal, install lab dependencies and start its separate local processes:
 

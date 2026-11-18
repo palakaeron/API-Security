@@ -149,6 +149,9 @@ class Scan(Base):
     configuration: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_summary: Mapped[str | None] = mapped_column(Text)
+    detector_results: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.current_timestamp()
     )
@@ -164,6 +167,7 @@ class Finding(Base):
     __table_args__ = (
         Index("ix_findings_scan_id", "scan_id"),
         Index("ix_findings_severity_status", "severity", "status"),
+        Index("uq_findings_scan_endpoint_category", "dedupe_key", unique=True),
         CheckConstraint(
             "severity IN ('info', 'low', 'medium', 'high', 'critical')",
             name="ck_findings_severity",
@@ -180,6 +184,7 @@ class Finding(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dedupe_key: Mapped[str | None] = mapped_column(String(512))
     scan_id: Mapped[int] = mapped_column(ForeignKey("scans.id", ondelete="CASCADE"), nullable=False)
     endpoint_id: Mapped[int | None] = mapped_column(
         ForeignKey("endpoints.id", ondelete="SET NULL")

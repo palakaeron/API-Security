@@ -1,6 +1,8 @@
 from decimal import Decimal
+from unittest.mock import Mock
 
-from app.database import Base
+from app import scan_runner
+from app.database import SQLITE_BUSY_TIMEOUT_MS, Base, get_engine
 from app.models import (
     Alert,
     Api,
@@ -15,7 +17,48 @@ from app.models import (
     User,
 )
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
+
+
+def test_sqlite_claim_lock_retry_is_bounded(monkeypatch) -> None:
+    db = Mock()
+    db.get_bind.return_value.dialect.name = "sqlite"
+    lock_error = OperationalError("UPDATE scans", {}, Exception("database is locked"))
+    successful_result = Mock(rowcount=1)
+    db.execute.side_effect = [lock_error, lock_error, successful_result]
+    monkeypatch.setattr(scan_runner, "sleep", lambda _delay: None)
+
+    result = scan_runner._execute_claim_update(db, object())
+
+    assert result is successful_result
+    assert db.execute.call_count == 3
+    assert db.rollback.call_count == 2
+
+
+def test_non_lock_database_errors_are_not_retried() -> None:
+    db = Mock()
+    db.get_bind.return_value.dialect.name = "sqlite"
+    error = OperationalError("UPDATE scans", {}, Exception("database is corrupt"))
+    db.execute.side_effect = error
+
+    try:
+        scan_runner._execute_claim_update(db, object())
+    except OperationalError as raised:
+        assert raised is error
+    else:
+        raise AssertionError("non-lock database errors must be propagated")
+
+    assert db.execute.call_count == 1
+
+
+def test_sqlite_busy_timeout_is_configured(tmp_path) -> None:
+    engine = get_engine(f"sqlite:///{tmp_path / 'busy-timeout.db'}")
+
+    with engine.connect() as connection:
+        timeout = connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one()
+
+    assert timeout == SQLITE_BUSY_TIMEOUT_MS
 
 
 def test_platform_relationships_round_trip_in_sqlite() -> None:
