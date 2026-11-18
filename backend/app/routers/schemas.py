@@ -25,6 +25,7 @@ DetectorName = Literal[
     "misconfiguration",
 ]
 _SAFE_PATH_PARAMETER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~-]{0,199}\Z")
+_EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
 def _validate_path(value: str | None) -> str | None:
@@ -55,6 +56,52 @@ class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     owner_id: int = Field(gt=0)
     org_id: int | None = Field(default=None, gt=0)
+
+
+class UserRegister(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    email: str = Field(min_length=3, max_length=320)
+    password: SecretStr = Field(min_length=12, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if _EMAIL.fullmatch(normalized) is None:
+            raise ValueError("email must be a valid email address")
+        return normalized
+
+
+class UserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    role: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class UserLogin(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+    email: str = Field(min_length=3, max_length=320)
+    password: SecretStr = Field(min_length=1, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_login_email(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if _EMAIL.fullmatch(normalized) is None:
+            raise ValueError("email must be a valid email address")
+        return normalized
+
+
+class AccessTokenRead(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    expires_in: int
 
 
 class ProjectUpdate(BaseModel):

@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from app.config import get_settings
 from app.database import get_engine, get_session_factory
 from app.models import Api
-from app.routers import apis, projects, scans
+from app.routers import apis, auth, projects, scans
 from app.scan_runner import reconcile_interrupted_scans
 
 settings = get_settings()
@@ -66,6 +66,7 @@ app.add_middleware(
 app.include_router(projects.router)
 app.include_router(apis.router)
 app.include_router(scans.router)
+app.include_router(auth.router)
 
 
 @app.on_event("startup")
