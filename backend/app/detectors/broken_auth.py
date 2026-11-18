@@ -22,7 +22,14 @@ which inspects token claims directly.
 
 from __future__ import annotations
 
-from app.detectors.base import DetectorResult, Evidence, OWASPCategory, Severity
+from app.detectors.base import (
+    DetectorIssue,
+    DetectorIssueCode,
+    DetectorResult,
+    Evidence,
+    OWASPCategory,
+    Severity,
+)
 from app.detectors.http_client import controlled_get
 from app.detectors.sanitiser import sanitise_headers
 from app.security.target_allowlist import TargetPolicy
@@ -79,6 +86,7 @@ class BrokenAuthDetector:
         endpoint_path: str,
         valid_token: str,
         path_param: str = "",
+        auth_required: bool | None = None,
     ) -> DetectorResult:
         """Run broken-auth probes on a single authenticated endpoint.
 
@@ -93,7 +101,6 @@ class BrokenAuthDetector:
         """
         url = base_url.rstrip("/") + endpoint_path.replace("{user_id}", path_param)
 
-        findings: list[str] = []
         all_evidence: list[Evidence] = []
 
         # --- Probe 1: No token ------------------------------------------------
@@ -101,8 +108,6 @@ class BrokenAuthDetector:
         all_evidence.append(
             _build_evidence(url, {}, s1, rh1, rb1, {"probe": "no_token", "expected": 401})
         )
-        if s1 < 400:
-            findings.append(f"no-token probe returned {s1} (expected 4xx)")
 
         # --- Probe 2: Garbage string (not even a JWT) -------------------------
         garbage_headers = {"Authorization": "Bearer not-a-jwt-at-all"}
@@ -112,8 +117,6 @@ class BrokenAuthDetector:
                 url, garbage_headers, s2, rh2, rb2, {"probe": "garbage_token", "expected": 401}
             )
         )
-        if s2 < 400:
-            findings.append(f"garbage-token probe returned {s2} (expected 4xx)")
 
         # --- Probe 3: Structurally valid JWT, wrong signature -----------------
         fake_headers = {"Authorization": f"Bearer {_FAKE_TOKEN}"}
@@ -128,8 +131,6 @@ class BrokenAuthDetector:
                 {"probe": "invalid_signature_jwt", "expected": 401},
             )
         )
-        if s3 < 400:
-            findings.append(f"invalid-signature JWT probe returned {s3} (expected 4xx)")
 
         # --- Probe 4: Valid token — confirm the endpoint works at all ---------
         valid_headers = {"Authorization": f"Bearer {valid_token}"}
@@ -141,13 +142,41 @@ class BrokenAuthDetector:
         )
         # A 4xx on the valid-token probe doesn't itself indicate broken auth
         # (it might indicate a different misconfiguration), but we record it.
-        if s4 >= 400:
-            findings.append(
-                f"valid-token probe returned {s4} — "
-                "endpoint may be misconfigured or the token is wrong"
+        bypass_probes = (
+            (s1 < 400, DetectorIssueCode.BROKEN_AUTH_NO_TOKEN_BYPASS, all_evidence[0]),
+            (s2 < 400, DetectorIssueCode.BROKEN_AUTH_MALFORMED_TOKEN_BYPASS, all_evidence[1]),
+            (
+                s3 < 400,
+                DetectorIssueCode.BROKEN_AUTH_INVALID_SIGNATURE_BYPASS,
+                all_evidence[2],
+            ),
+        )
+        # A bypass can only be confirmed when the caller has independently
+        # established that the endpoint requires authentication and the valid
+        # test credential can access it.  Otherwise this is inconclusive.
+        confirmed = auth_required is True and s4 < 400
+        issues = [
+            DetectorIssue(
+                issue_code=issue_code,
+                title=f"Broken authentication on {endpoint_path}",
+                detail=(
+                    f"Protected endpoint {endpoint_path} accepted an unexpected "
+                    "credential probe."
+                ),
+                vulnerable=True,
+                severity=self.SEVERITY,
+                confidence=self.CONFIDENCE,
+                evidence=[evidence],
+                endpoint_path=endpoint_path,
+                endpoint_method="GET",
             )
-
-        vulnerable = bool(findings)
+            for observed, issue_code, evidence in bypass_probes
+            if observed and confirmed
+        ]
+        bypass_observed = any(observed for observed, _, _ in bypass_probes)
+        inconclusive = (bypass_observed and not confirmed) or s4 >= 400
+        findings = [issue.detail for issue in issues]
+        vulnerable = bool(issues)
         return DetectorResult(
             detector_id=self.DETECTOR_ID,
             owasp_category=self.OWASP_CATEGORY,
@@ -165,6 +194,13 @@ class BrokenAuthDetector:
             detail=(
                 "\n".join(findings)
                 if findings
-                else "All auth probes returned expected status codes."
+                else (
+                    "Authentication classification is inconclusive: endpoint "
+                    "requirement or valid test credentials could not be established."
+                    if inconclusive
+                    else "All auth probes returned expected status codes."
+                )
             ),
+            issues=issues,
+            status="inconclusive" if inconclusive else "completed",
         )

@@ -26,7 +26,14 @@ handles without side effects.
 
 from __future__ import annotations
 
-from app.detectors.base import DetectorResult, Evidence, OWASPCategory, Severity
+from app.detectors.base import (
+    DetectorIssue,
+    DetectorIssueCode,
+    DetectorResult,
+    Evidence,
+    OWASPCategory,
+    Severity,
+)
 from app.detectors.http_client import controlled_get, controlled_post
 from app.security.target_allowlist import TargetPolicy
 
@@ -182,6 +189,49 @@ class MisconfigurationDetector:
             if any("introspection" in f or "discloses" in f for f in findings)
             else Severity.MEDIUM
         )
+        issues: list[DetectorIssue] = []
+        if missing_headers:
+            issues.append(
+                DetectorIssue(
+                    issue_code=DetectorIssueCode.MISCONFIGURATION_MISSING_SECURITY_HEADERS,
+                    title="Missing security headers",
+                    detail=f"Missing headers: {missing_headers!r}.",
+                    vulnerable=True,
+                    severity=Severity.LOW,
+                    confidence=self.CONFIDENCE,
+                    evidence=[all_evidence[0]],
+                    endpoint_path=probe_path,
+                    endpoint_method="GET",
+                )
+            )
+        if disclosed:
+            issues.append(
+                DetectorIssue(
+                    issue_code=DetectorIssueCode.MISCONFIGURATION_VERBOSE_ERROR_DISCLOSURE,
+                    title="Verbose error disclosure",
+                    detail=f"Error response disclosed patterns: {disclosed!r}.",
+                    vulnerable=True,
+                    severity=Severity.MEDIUM,
+                    confidence=self.CONFIDENCE,
+                    evidence=[all_evidence[1]],
+                    endpoint_path=probe_path,
+                    endpoint_method="POST",
+                )
+            )
+        if graphql_path and schema_exposed:
+            issues.append(
+                DetectorIssue(
+                    issue_code=DetectorIssueCode.MISCONFIGURATION_GRAPHQL_INTROSPECTION,
+                    title="GraphQL introspection enabled",
+                    detail=f"GraphQL schema was exposed at {graphql_path}.",
+                    vulnerable=True,
+                    severity=Severity.HIGH,
+                    confidence=self.CONFIDENCE,
+                    evidence=[all_evidence[2]],
+                    endpoint_path=graphql_path,
+                    endpoint_method="POST",
+                )
+            )
         return DetectorResult(
             detector_id=self.DETECTOR_ID,
             owasp_category=self.OWASP_CATEGORY,
@@ -196,4 +246,5 @@ class MisconfigurationDetector:
             ),
             remediation_ref=self.REMEDIATION_REF,
             detail="\n".join(findings) if findings else "All misconfiguration checks passed.",
+            issues=issues,
         )

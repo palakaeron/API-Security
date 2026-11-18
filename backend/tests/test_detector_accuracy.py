@@ -36,6 +36,7 @@ from __future__ import annotations
 import os
 
 import pytest
+from app.detectors.base import DetectorIssueCode
 from app.detectors.bfla import BflaDetector
 from app.detectors.bola import BolaDetector
 from app.detectors.bopla import BoplaDetector
@@ -395,6 +396,9 @@ class TestMisconfigurationDetector:
         )
         assert gql_ev is not None
         assert gql_ev.context["schema_exposed"] is True
+        assert DetectorIssueCode.MISCONFIGURATION_GRAPHQL_INTROSPECTION in {
+            issue.issue_code for issue in result.issues
+        }
 
     def test_graphql_introspection_secure_does_not_fire(self, transport, monkeypatch):
         _patch_http_client(transport, monkeypatch)
@@ -429,6 +433,9 @@ class TestMisconfigurationDetector:
         assert len(header_ev.context["missing_headers"]) > 0, (
             "Lab app should be missing at least one security header"
         )
+        assert DetectorIssueCode.MISCONFIGURATION_MISSING_SECURITY_HEADERS in {
+            issue.issue_code for issue in result.issues
+        }
 
 
 # ── JWT Analyzer ──────────────────────────────────────────────────────────────
@@ -459,6 +466,9 @@ class TestJwtAnalyzer:
         )
         assert weak_ev is not None
         assert weak_ev.context["cracked"] is True
+        assert DetectorIssueCode.JWT_WEAK_SIGNING_SECRET in {
+            issue.issue_code for issue in result.issues
+        }
 
     def test_vuln_auth_excessive_expiry_fires(self, transport, monkeypatch):
         _patch_http_client(transport, monkeypatch)
@@ -476,6 +486,9 @@ class TestJwtAnalyzer:
         assert exp_ev is not None
         assert exp_ev.context["excessive"] is True
         assert exp_ev.context["expiry_hours"] > 24
+        assert DetectorIssueCode.JWT_EXCESSIVE_EXPIRY in {
+            issue.issue_code for issue in result.issues
+        }
 
     def test_vuln_auth_missing_claims_fires(self, transport, monkeypatch):
         _patch_http_client(transport, monkeypatch)
@@ -494,6 +507,9 @@ class TestJwtAnalyzer:
         # Vuln token has sub+role+exp but no iss or aud
         assert "iss" in claims_ev.context["missing_claims"]
         assert "aud" in claims_ev.context["missing_claims"]
+        assert DetectorIssueCode.JWT_MISSING_REQUIRED_CLAIMS in {
+            issue.issue_code for issue in result.issues
+        }
 
     def test_secure_auth_does_not_fire_on_weak_secret(self, transport, monkeypatch):
         """Secure auth uses an env-supplied secret not in the wordlist."""

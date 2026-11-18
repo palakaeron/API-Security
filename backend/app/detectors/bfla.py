@@ -17,7 +17,14 @@ reach admin endpoints) is expected behaviour, not a finding.
 
 from __future__ import annotations
 
-from app.detectors.base import DetectorResult, Evidence, OWASPCategory, Severity
+from app.detectors.base import (
+    DetectorIssue,
+    DetectorIssueCode,
+    DetectorResult,
+    Evidence,
+    OWASPCategory,
+    Severity,
+)
 from app.detectors.http_client import controlled_get
 from app.detectors.sanitiser import sanitise_headers
 from app.security.target_allowlist import TargetPolicy
@@ -98,5 +105,25 @@ class BflaDetector:
                 "Server-side role validation is missing or insufficient."
                 if vulnerable
                 else f"Server returned HTTP {status} — function-level role check is enforced."
+            ),
+            issues=(
+                [
+                    DetectorIssue(
+                        issue_code=DetectorIssueCode.BFLA_ADMIN_FUNCTION_ACCESS,
+                        title=f"BFLA: regular user accessed {admin_endpoint_path}",
+                        detail=(
+                            f"A regular-user request returned HTTP {status} from the "
+                            "admin-only function."
+                        ),
+                        vulnerable=True,
+                        severity=self.SEVERITY,
+                        confidence=self.CONFIDENCE,
+                        evidence=[evidence],
+                        endpoint_path=admin_endpoint_path,
+                        endpoint_method="GET",
+                    )
+                ]
+                if vulnerable
+                else []
             ),
         )

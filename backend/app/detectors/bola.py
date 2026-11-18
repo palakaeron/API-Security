@@ -37,7 +37,14 @@ Usage
 
 from __future__ import annotations
 
-from app.detectors.base import DetectorResult, Evidence, OWASPCategory, Severity
+from app.detectors.base import (
+    DetectorIssue,
+    DetectorIssueCode,
+    DetectorResult,
+    Evidence,
+    OWASPCategory,
+    Severity,
+)
 from app.detectors.http_client import controlled_get
 from app.detectors.sanitiser import sanitise_headers
 from app.security.target_allowlist import TargetPolicy
@@ -135,5 +142,25 @@ class BolaDetector:
                 f"The server returned HTTP {status} without checking object ownership."
                 if vulnerable
                 else f"Server returned HTTP {status} — ownership check is enforced."
+            ),
+            issues=(
+                [
+                    DetectorIssue(
+                        issue_code=DetectorIssueCode.BOLA_CROSS_USER_ACCESS,
+                        title=f"BOLA: cross-user access to {endpoint_path} succeeded",
+                        detail=(
+                            f"Attacker accessed the victim resource via {endpoint_path}; "
+                            f"the server returned HTTP {status}."
+                        ),
+                        vulnerable=True,
+                        severity=self.SEVERITY,
+                        confidence=self.CONFIDENCE,
+                        evidence=[evidence],
+                        endpoint_path=endpoint_path,
+                        endpoint_method="GET",
+                    )
+                ]
+                if vulnerable
+                else []
             ),
         )

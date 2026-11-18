@@ -152,6 +152,8 @@ class Scan(Base):
     detector_results: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, nullable=False, default=list
     )
+    scoring_version: Mapped[str | None] = mapped_column(String(16))
+    assessment_status: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.current_timestamp()
     )
@@ -168,6 +170,7 @@ class Finding(Base):
         Index("ix_findings_scan_id", "scan_id"),
         Index("ix_findings_severity_status", "severity", "status"),
         Index("uq_findings_scan_endpoint_category", "dedupe_key", unique=True),
+        Index("uq_findings_finding_identity", "finding_identity", unique=True),
         CheckConstraint(
             "severity IN ('info', 'low', 'medium', 'high', 'critical')",
             name="ck_findings_severity",
@@ -193,6 +196,12 @@ class Finding(Base):
     severity: Mapped[str] = mapped_column(String(16), nullable=False)
     confidence: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
     risk_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    issue_code: Mapped[str | None] = mapped_column(String(128))
+    impact: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    exploitability: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    risk_severity: Mapped[str | None] = mapped_column(String(16))
+    scoring_version: Mapped[str | None] = mapped_column(String(16))
+    finding_identity: Mapped[str | None] = mapped_column(String(1024))
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="open")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.current_timestamp()

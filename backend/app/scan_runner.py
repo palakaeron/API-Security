@@ -6,9 +6,12 @@ Only detector names and sanitized execution outcomes are persisted.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
+from decimal import Decimal
 from threading import RLock
 from time import sleep
 from typing import Any
@@ -19,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.database import get_engine, get_session_factory
-from app.detectors.base import DetectorResult
+from app.detectors.base import DetectorIssue, DetectorResult
 from app.detectors.base import Evidence as DetectorEvidence
 from app.detectors.bfla import BflaDetector
 from app.detectors.bola import BolaDetector
@@ -30,6 +33,13 @@ from app.detectors.jwt_analyzer import JwtAnalyzer
 from app.detectors.misconfiguration import MisconfigurationDetector
 from app.detectors.sanitiser import sanitise_body, sanitise_headers
 from app.models import Api, Endpoint, Evidence, Finding, Scan, ScanHistory
+from app.risk_scoring import (
+    aggregate_finding_risk,
+    calculate_risk_score,
+    get_issue_risk_factors,
+    get_scoring_methodology_version,
+    summarize_detector_coverage,
+)
 from app.security.target_allowlist import TargetNotAllowed, TargetPolicy, validate_controlled_target
 
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="api-security-scan")
@@ -212,6 +222,113 @@ def _persist_result(
     return 1
 
 
+def _finding_identity(scan_id: int, endpoint_id: int, category: str, issue_code: str) -> str:
+    """Create a canonical, collision-resistant identity for a modern finding."""
+
+    canonical = json.dumps(
+        [scan_id, endpoint_id, category, issue_code], separators=(",", ":"), ensure_ascii=False
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _persist_issue(
+    db: Session,
+    scan: Scan,
+    result: DetectorResult,
+    issue: DetectorIssue,
+    endpoints: list[Endpoint],
+) -> int:
+    """Persist one confirmed issue using centralized factors and issue evidence."""
+
+    if not issue.vulnerable:
+        return 0
+    if not issue.endpoint_path or not issue.endpoint_method:
+        raise ValueError(f"issue '{issue.issue_code}' has no endpoint association")
+    endpoint = _find_endpoint(endpoints, issue.endpoint_path, issue.endpoint_method)
+    if endpoint is None:
+        raise ValueError(
+            f"issue '{issue.issue_code}' endpoint is not in the API inventory"
+        )
+
+    issue_code = issue.issue_code.value
+    factors = get_issue_risk_factors(issue_code)
+    scored = calculate_risk_score(factors.impact, factors.exploitability, issue.confidence)
+    scan.scoring_version = scored.scoring_version
+    category = result.owasp_category.value
+    identity = _finding_identity(scan.id, endpoint.id, category, issue_code)
+    if db.scalar(select(Finding.id).where(Finding.finding_identity == identity)) is not None:
+        return 0
+
+    try:
+        with db.begin_nested():
+            finding = Finding(
+                dedupe_key=f"{scan.id}:{endpoint.id}:{category}:{issue_code}",
+                finding_identity=identity,
+                scan_id=scan.id,
+                endpoint_id=endpoint.id,
+                category=category,
+                severity=issue.severity.value,
+                issue_code=issue_code,
+                confidence=Decimal(str(scored.confidence)),
+                impact=Decimal(str(scored.impact)),
+                exploitability=Decimal(str(scored.exploitability)),
+                risk_score=Decimal(str(scored.risk_score)),
+                risk_severity=scored.risk_severity.value,
+                scoring_version=scored.scoring_version,
+            )
+            db.add(finding)
+            db.flush()
+            for item in issue.evidence:
+                db.add(
+                    Evidence(
+                        finding_id=finding.id,
+                        request=sanitise_body(
+                            {
+                                "url": item.url,
+                                "method": item.method,
+                                "headers": item.request_headers,
+                                "body": item.request_body,
+                            }
+                        ),
+                        response=sanitise_body(
+                            {
+                                "status": item.response_status,
+                                "headers": sanitise_headers(item.response_headers),
+                                "body": item.response_body,
+                            }
+                        ),
+                        context=sanitise_body(item.context),
+                    )
+                )
+    except IntegrityError:
+        return 0
+    return 1
+
+
+def _persist_detector_result(
+    db: Session,
+    scan: Scan,
+    result: DetectorResult,
+    endpoints: list[Endpoint],
+    *,
+    legacy_endpoint: Endpoint | None = None,
+) -> tuple[int, list[str]]:
+    """Persist modern issues or retain the legacy aggregate behavior."""
+
+    if result.issues:
+        finding_count = 0
+        errors: list[str] = []
+        for issue in result.issues:
+            try:
+                finding_count += _persist_issue(db, scan, result, issue, endpoints)
+            except ValueError as exc:
+                errors.append(str(exc))
+        return finding_count, errors
+    if result.vulnerable and legacy_endpoint is not None:
+        return _persist_result(db, scan, legacy_endpoint, result), []
+    return 0, []
+
+
 def _outcome(
     detector: str,
     state: str,
@@ -351,6 +468,7 @@ def _execute_detector(
         finding_count = 0
         vulnerable = False
         last_result: DetectorResult | None = None
+        persistence_errors: list[str] = []
         for path in paths:
             if cancel_check is not None and cancel_check():
                 raise ScanCancelled
@@ -371,10 +489,20 @@ def _execute_detector(
                 probe_path=endpoint.path,
                 graphql_path=config.get("graphql_path"),
             )
-            finding_count += _persist_result(db, scan, endpoint, result)
+            persisted, errors = _persist_detector_result(
+                db, scan, result, endpoints, legacy_endpoint=endpoint
+            )
+            finding_count += persisted
+            persistence_errors.extend(errors)
             vulnerable = vulnerable or result.vulnerable
             last_result = result
-        outcome = _outcome(name, "executed", result=last_result, findings=finding_count)
+        outcome = _outcome(
+            name,
+            "failed" if persistence_errors else "executed",
+            reason="; ".join(persistence_errors) if persistence_errors else None,
+            result=last_result,
+            findings=finding_count,
+        )
         outcome["vulnerable"] = vulnerable
         return outcome
 
@@ -410,8 +538,9 @@ def _execute_detector(
         )
     elif name == "bopla":
         endpoint = _find_endpoint(endpoints, str(config["read_path"]), "GET")
-        write_endpoint = _find_endpoint(endpoints, str(config["write_path"]), "PATCH")
-        if endpoint is None or write_endpoint is None:
+        if endpoint is None or _find_endpoint(
+            endpoints, str(config["write_path"]), "PATCH"
+        ) is None:
             return _outcome(
                 name,
                 "skipped",
@@ -425,35 +554,55 @@ def _execute_detector(
             read_path=str(config["read_path"]),
             write_path=str(config["write_path"]),
         )
-        read_evidence = [
-            item for item in result.evidence if item.context.get("probe") == "read"
-        ]
-        write_evidence = [
-            item for item in result.evidence if item.context.get("probe") == "write_escalation"
-        ]
-        read_vulnerable = any(
-            item.context.get("sensitive_fields_exposed") for item in read_evidence
+        if result.issues:
+            finding_count, persistence_errors = _persist_detector_result(
+                db, scan, result, endpoints, legacy_endpoint=endpoint
+            )
+        else:
+            # Preserve pre-6.3B aggregate BOPLA callers until all callers emit
+            # endpoint-associated DetectorIssue objects.
+            read_evidence = [
+                item for item in result.evidence if item.context.get("probe") == "read"
+            ]
+            write_evidence = [
+                item
+                for item in result.evidence
+                if item.context.get("probe") == "write_escalation"
+            ]
+            read_vulnerable = any(
+                item.context.get("sensitive_fields_exposed") for item in read_evidence
+            )
+            write_vulnerable = any(
+                item.context.get("escalation_succeeded") for item in write_evidence
+            )
+            finding_count = _persist_result(
+                db,
+                scan,
+                endpoint,
+                result,
+                evidence=read_evidence,
+                vulnerable=read_vulnerable,
+            )
+            write_endpoint = _find_endpoint(endpoints, str(config["write_path"]), "PATCH")
+            persistence_errors = []
+            if write_endpoint is not None:
+                finding_count += _persist_result(
+                    db,
+                    scan,
+                    write_endpoint,
+                    result,
+                    evidence=write_evidence,
+                    vulnerable=write_vulnerable,
+                )
+        return _outcome(
+            name,
+            "failed"
+            if persistence_errors
+            else ("inconclusive" if result.status == "inconclusive" else "executed"),
+            reason="; ".join(persistence_errors) if persistence_errors else None,
+            result=result,
+            findings=finding_count,
         )
-        write_vulnerable = any(
-            item.context.get("escalation_succeeded") for item in write_evidence
-        )
-        finding_count = _persist_result(
-            db,
-            scan,
-            endpoint,
-            result,
-            evidence=read_evidence,
-            vulnerable=read_vulnerable,
-        )
-        finding_count += _persist_result(
-            db,
-            scan,
-            write_endpoint,
-            result,
-            evidence=write_evidence,
-            vulnerable=write_vulnerable,
-        )
-        return _outcome(name, "executed", result=result, findings=finding_count)
     elif name == "broken_auth":
         endpoint = _find_endpoint(endpoints, str(config["endpoint_path"]), "GET")
         if endpoint is None:
@@ -492,11 +641,17 @@ def _execute_detector(
             protected_path_param=str(config.get("protected_path_param", "")),
         )
 
+    finding_count, persistence_errors = _persist_detector_result(
+        db, scan, result, endpoints, legacy_endpoint=endpoint
+    )
     return _outcome(
         name,
-        "executed",
+        "failed"
+        if persistence_errors
+        else ("inconclusive" if result.status == "inconclusive" else "executed"),
+        reason="; ".join(persistence_errors) if persistence_errors else None,
         result=result,
-        findings=_persist_result(db, scan, endpoint, result),
+        findings=finding_count,
     )
 
 
@@ -546,7 +701,65 @@ def _finalize_scan(
     if scan is None:
         db.rollback()
         return False
-    _record_history(db, scan, status)
+
+    previous_score: Decimal | None = None
+    current_score: Decimal | None = None
+    delta: Decimal | None = None
+    if status == "completed":
+        configured = (scan.configuration or {}).get("detectors", ["misconfiguration"])
+        coverage = summarize_detector_coverage(configured, scan.detector_results or [])
+        finding_summary = aggregate_finding_risk(
+            db.scalars(select(Finding).where(Finding.scan_id == scan.id)).all()
+        )
+        complete = (
+            scan.assessment_status == "complete"
+            and not coverage.incomplete
+            and not finding_summary.has_unscored_findings
+            and finding_summary.scoring_versions <= {get_scoring_methodology_version()}
+        )
+        if complete:
+            current_score = finding_summary.maximum_score or Decimal("0.0")
+            scan.score = current_score
+            scan.scoring_version = get_scoring_methodology_version()
+        else:
+            scan.assessment_status = "incomplete"
+            scan.score = None
+
+    if status != "completed" or scan.assessment_status == "incomplete":
+        scan.score = None
+        if status != "completed":
+            scan.assessment_status = "incomplete"
+
+    previous_scan = db.scalar(
+        select(Scan)
+        .where(
+            Scan.api_id == scan.api_id,
+            Scan.id != scan.id,
+            Scan.status == "completed",
+            Scan.score.is_not(None),
+        )
+        .order_by(Scan.completed_at.desc(), Scan.id.desc())
+        .limit(1)
+    )
+    if previous_scan is not None:
+        previous_score = previous_scan.score
+        if (
+            current_score is not None
+            and previous_scan.scoring_version == scan.scoring_version
+        ):
+            delta = current_score - previous_score
+
+    db.add(
+        ScanHistory(
+            api_id=scan.api_id,
+            scan_id=scan.id,
+            status=scan.status,
+            event=status,
+            previous_score=previous_score,
+            current_score=current_score,
+            delta=delta,
+        )
+    )
     db.commit()
     return True
 
@@ -573,6 +786,7 @@ def run_scan(scan_id: int) -> None:
             )
             detector_names = (scan.configuration or {}).get("detectors", ["misconfiguration"])
             detector_failed = False
+            assessment_incomplete = False
             detector_error_summary: str | None = None
             for detector_name in detector_names:
                 if _is_cancelled(db, scan.id):
@@ -600,7 +814,16 @@ def run_scan(scan_id: int) -> None:
                         reason=f"detector execution failed ({type(exc).__name__})",
                     )
                 scan.detector_results = [*(scan.detector_results or []), result]
+                if result.get("status") in {"skipped", "inconclusive", "failed"}:
+                    assessment_incomplete = True
+                if result.get("status") == "failed" and not detector_failed:
+                    detector_failed = True
+                    detector_error_summary = result.get(
+                        "reason", "detector result persistence failed"
+                    )
                 db.commit()
+            scan.assessment_status = "incomplete" if assessment_incomplete else "complete"
+            db.commit()
             if not _is_cancelled(db, scan.id) and detector_failed:
                 _finalize_scan(
                     db,

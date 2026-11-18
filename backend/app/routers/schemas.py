@@ -251,6 +251,9 @@ class ScanRead(BaseModel):
     completed_at: datetime | None
     error_summary: str | None
     detector_results: list[dict]
+    score: float | None
+    scoring_version: str | None
+    assessment_status: Literal["complete", "incomplete"] | None
     created_at: datetime
 
 
@@ -277,6 +280,80 @@ class ScanHistoryRead(BaseModel):
 
 class ScanHistoryListResponse(BaseModel):
     items: list[ScanHistoryRead]
+
+
+class FindingEndpointRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    api_id: int
+    path: str
+    method: str
+
+
+class EvidenceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    finding_id: int
+    request: dict
+    response: dict
+    context: dict
+    timestamp: datetime
+
+
+class FindingRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scan_id: int
+    endpoint_id: int | None
+    endpoint: FindingEndpointRead | None
+    category: str
+    issue_code: str | None
+    severity: str
+    confidence: float
+    impact: float | None
+    exploitability: float | None
+    risk_score: float | None
+    risk_severity: str | None
+    scoring_version: str | None
+    status: str
+    created_at: datetime
+    evidence: list[EvidenceRead]
+
+
+class FindingListResponse(BaseModel):
+    items: list[FindingRead]
+    total: int
+    limit: int
+    offset: int
+
+
+class SeverityCounts(BaseModel):
+    critical: int
+    high: int
+    medium: int
+    low: int
+    informational: int
+
+
+class ScanSummaryRead(BaseModel):
+    scan_id: int
+    status: Literal["pending", "running", "completed", "failed", "cancelled"]
+    assessment_status: Literal["complete", "incomplete"]
+    overall_risk_score: float | None
+    scoring_version: str | None
+    total_findings: int
+    severity_counts: SeverityCounts
+    configured_detectors: int
+    executed_detectors: int
+    skipped_detectors: int
+    failed_detectors: int
+    inconclusive_detectors: int
+    detector_coverage: float
+    assessment_complete: bool
+    assessment_incomplete: bool
 
 
 class DiscoveryImportRequest(BaseModel):

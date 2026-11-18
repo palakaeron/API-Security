@@ -1,41 +1,69 @@
-const checks = [
-  { label: "Controlled target policy", state: "Enabled" },
-  { label: "Evidence-first analysis", state: "Enabled" },
-  { label: "Project-defined score", state: "Configured" },
-];
+/* eslint-disable no-unused-vars -- ESLint's base rule does not count JSX references. */
+import { useEffect, useMemo, useState } from "react";
+
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
+const DEFAULT_SCAN = import.meta.env.VITE_DEFAULT_SCAN_ID || "";
+const SEVERITIES = ["critical", "high", "medium", "low", "informational"];
+
+const label = (value) => value ? value.replaceAll("_", " ") : "Not available";
+const score = (value) => value === null || value === undefined ? "Not available" : Number(value).toFixed(1);
+
+async function getJson(path) {
+  const response = await fetch(`${API_BASE}${path}`, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`Request failed (${response.status})`);
+  return response.json();
+}
+
+function Pill({ value }) { return <span className={`pill pill-${value || "unknown"}`}>{label(value)}</span>; }
+function Metric({ title, value, detail, tone = "cyan" }) { return <article className={`metric metric-${tone}`}><small>{title}</small><strong>{value}</strong><span>{detail}</span></article>; }
+function State({ children, error = false }) { return <div className={`state ${error ? "state-error" : ""}`}>{children}</div>; }
+function Retry({ message, retry }) { return <State error><strong>Could not load this view</strong><p>{message}</p><button className="button secondary" onClick={retry}>Retry</button></State>; }
+
+function Overview({ summary, openFindings }) {
+  const counts = summary.severity_counts || {};
+  const coverage = Math.round((summary.detector_coverage || 0) * 100);
+  return <div className="stack">
+    <div className="heading"><div><small className="eyebrow">Dashboard overview</small><h1>Scan risk profile</h1></div><Pill value={summary.status} /></div>
+    {summary.assessment_incomplete && <div className="notice warning"><b>Assessment incomplete.</b> Skipped, failed, or inconclusive checks mean the overall score is intentionally not reported as zero.</div>}
+    {summary.status === "failed" && <div className="notice error">The scan failed before completing its assessment.</div>}
+    {summary.status === "cancelled" && <div className="notice warning">The scan was cancelled. Partial findings remain available.</div>}
+    <div className="metrics"><Metric title="Overall risk score" value={score(summary.overall_risk_score)} detail={summary.scoring_version ? `Methodology ${summary.scoring_version}` : "No completed score"} tone="violet" /><Metric title="Assessment" value={label(summary.assessment_status)} detail={`${summary.total_findings} finding${summary.total_findings === 1 ? "" : "s"}`} /><Metric title="Detector coverage" value={`${coverage}%`} detail={`${summary.executed_detectors} of ${summary.configured_detectors} executed`} tone="green" /><Metric title="Scoring version" value={summary.scoring_version || "Not available"} detail="Backend methodology" tone="amber" /></div>
+    <div className="columns"><section className="panel"><div className="panel-head"><div><small className="eyebrow">Severity distribution</small><h2>Confirmed findings</h2></div><button className="link" onClick={openFindings}>View findings →</button></div><div className="severity-list">{SEVERITIES.map((item) => <div className="severity-row" key={item}><i className={`dot dot-${item}`} /><span>{label(item)}</span><div className="bar"><b className={`bar-${item}`} style={{ width: `${summary.total_findings ? (counts[item] / summary.total_findings) * 100 : 0}%` }} /></div><strong>{counts[item] || 0}</strong></div>)}</div></section><section className="panel"><small className="eyebrow">Execution coverage</small><h2>Detector status</h2><div className="coverage-list"><Coverage name="Configured" value={summary.configured_detectors} /><Coverage name="Executed" value={summary.executed_detectors} tone="good" /><Coverage name="Skipped" value={summary.skipped_detectors} tone="warn" /><Coverage name="Failed" value={summary.failed_detectors} tone="bad" /><Coverage name="Inconclusive" value={summary.inconclusive_detectors} tone="warn" /></div></section></div>
+  </div>;
+}
+function Coverage({ name, value, tone = "" }) { return <div className="coverage"><span>{name}</span><b className={tone}>{value}</b></div>; }
+
+function Findings({ data, loading, error, page, next, setPage, select, filters, setFilters, retry }) {
+  const items = useMemo(() => data.items.filter((item) => (!filters.severity || item.risk_severity === filters.severity) && (!filters.status || item.status === filters.status)), [data.items, filters]);
+  if (loading) return <State>Loading findings…</State>;
+  if (error) return <Retry message={error} retry={retry} />;
+  return <div className="stack"><div className="heading"><div><small className="eyebrow">Findings</small><h1>Security issues</h1></div><span className="muted">Page {page + 1}</span></div><div className="filters"><label>Risk severity<select value={filters.severity} onChange={(e) => setFilters({ ...filters, severity: e.target.value })}><option value="">All severities</option>{SEVERITIES.map((item) => <option key={item} value={item}>{label(item)}</option>)}</select></label><label>Status<select value={filters.status} onChange={(e) => setFilters({ ...filters, status: e.target.value })}><option value="">All statuses</option><option value="open">Open</option><option value="confirmed">Confirmed</option><option value="resolved">Resolved</option><option value="false_positive">False positive</option></select></label></div>{data.items.length === 0 ? <State>No findings are available for this scan.</State> : items.length === 0 ? <State>No findings match these filters.</State> : <div className="table-panel"><div className="table-scroll"><table><thead><tr><th>Issue</th><th>Endpoint</th><th>Severity</th><th>Risk score</th><th>Status</th><th /></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td><button className="issue" onClick={() => select(item.id)}>{item.issue_code || item.category}</button><small>{item.category}</small></td><td><code>{item.endpoint ? `${item.endpoint.method} ${item.endpoint.path}` : "Endpoint unavailable"}</code></td><td><span className={`severity-text text-${item.risk_severity || item.severity}`}>{label(item.risk_severity || item.severity)}</span></td><td><b>{score(item.risk_score)}</b></td><td><Pill value={item.status} /></td><td><button className="arrow" onClick={() => select(item.id)} aria-label="Open finding">→</button></td></tr>)}</tbody></table></div><div className="pagination"><button className="button secondary" disabled={!page} onClick={() => setPage(page - 1)}>← Previous</button><button className="button secondary" disabled={!next} onClick={() => setPage(page + 1)}>Next →</button></div></div>}</div>;
+}
+
+function Detail({ finding, loading, error, back, retry }) {
+  if (loading) return <State>Loading finding…</State>;
+  if (error) return <Retry message={error} retry={retry} />;
+  if (!finding) return <State>Select a finding from the findings list.</State>;
+  return <div className="stack"><button className="back" onClick={back}>← Back to findings</button><div className="heading"><div><small className="eyebrow">Finding detail</small><h1>{finding.issue_code || finding.category}</h1><p className="lead">{finding.endpoint ? `${finding.endpoint.method} ${finding.endpoint.path}` : "Endpoint information unavailable"}</p></div><Pill value={finding.status} /></div><div className="columns"><section className="panel"><small className="eyebrow">Risk assessment</small><div className="detail-score">{score(finding.risk_score)}</div><p className="muted">Calculated risk score</p><dl className="facts"><Fact name="Risk severity" value={label(finding.risk_severity)} /><Fact name="Detector severity" value={label(finding.severity)} /><Fact name="Confidence" value={score(finding.confidence)} /><Fact name="Impact" value={score(finding.impact)} /><Fact name="Exploitability" value={score(finding.exploitability)} /><Fact name="Scoring version" value={finding.scoring_version || "Not available"} /></dl></section><section className="panel"><small className="eyebrow">Issue information</small><h2>{finding.category}</h2><dl className="facts"><Fact name="Issue code" value={finding.issue_code || "Legacy detector result"} /><Fact name="Endpoint" value={finding.endpoint?.path || "Not available"} /><Fact name="HTTP method" value={finding.endpoint?.method || "Not available"} /><Fact name="Created" value={new Date(finding.created_at).toLocaleString()} /></dl></section></div><section className="panel"><div className="panel-head"><div><small className="eyebrow">Evidence</small><h2>Sanitized request and response</h2></div><span className="muted">{finding.evidence?.length || 0} record{finding.evidence?.length === 1 ? "" : "s"}</span></div>{finding.evidence?.length ? <div className="evidence-list">{finding.evidence.map((item) => <article className="evidence" key={item.id}><small>{new Date(item.timestamp).toLocaleString()}</small><div className="evidence-grid"><Evidence title="Request" value={item.request} /><Evidence title="Response" value={item.response} /><Evidence title="Context" value={item.context} /></div></article>)}</div> : <State>No evidence is available for this finding.</State>}</section></div>;
+}
+function Fact({ name, value }) { return <div><dt>{name}</dt><dd>{value}</dd></div>; }
+function Evidence({ title, value }) { return <div><h3>{title}</h3><pre>{JSON.stringify(value, null, 2)}</pre></div>; }
 
 function App() {
-  return (
-    <main className="min-h-screen bg-slate-950 px-6 py-12 text-slate-100">
-      <section className="mx-auto max-w-4xl">
-        <p className="mb-3 text-sm font-semibold uppercase tracking-[0.25em] text-cyan-400">
-          Foundations checkpoint
-        </p>
-        <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
-          API Security &amp; Risk Intelligence
-        </h1>
-        <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-300">
-          A defensive, evidence-first workspace for testing APIs inside an explicitly controlled
-          local lab.
-        </p>
-
-        <div className="mt-10 grid gap-4 sm:grid-cols-3">
-          {checks.map((check) => (
-            <article key={check.label} className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-              <p className="text-sm text-slate-400">{check.label}</p>
-              <p className="mt-3 text-xl font-semibold text-emerald-400">{check.state}</p>
-            </article>
-          ))}
-        </div>
-
-        <p className="mt-10 rounded-lg border border-amber-900/60 bg-amber-950/30 p-4 text-sm text-amber-200">
-          The dashboard is currently a Milestone 1 skeleton. Vulnerable lab APIs and scanning
-          features are added only in their scheduled milestones.
-        </p>
-      </section>
-    </main>
-  );
+  const [menu, setMenu] = useState(false); const [view, setView] = useState("overview"); const [input, setInput] = useState(DEFAULT_SCAN); const [scanId, setScanId] = useState(DEFAULT_SCAN); const [summary, setSummary] = useState(null); const [summaryState, setSummaryState] = useState({ loading: Boolean(DEFAULT_SCAN), error: "" }); const [data, setData] = useState({ items: [], total: 0 }); const [findingsState, setFindingsState] = useState({ loading: false, error: "" }); const [page, setPage] = useState(0); const [findingId, setFindingId] = useState(null); const [finding, setFinding] = useState(null); const [findingState, setFindingState] = useState({ loading: false, error: "" }); const [filters, setFilters] = useState({ severity: "", status: "" });
+  const loadSummary = async (id = scanId) => { if (!id) return; setSummaryState({ loading: true, error: "" }); try { setSummary(await getJson(`/scans/${encodeURIComponent(id)}/summary`)); setSummaryState({ loading: false, error: "" }); } catch (e) { setSummary(null); setSummaryState({ loading: false, error: e.message }); } };
+  const loadFindings = async (id = scanId, currentPage = page) => { if (!id) return; setFindingsState({ loading: true, error: "" }); try { setData(await getJson(`/scans/${encodeURIComponent(id)}/findings?limit=20&offset=${currentPage * 20}`)); setFindingsState({ loading: false, error: "" }); } catch (e) { setFindingsState({ loading: false, error: e.message }); } };
+  const loadFinding = async (id) => { setFindingState({ loading: true, error: "" }); try { setFinding(await getJson(`/findings/${encodeURIComponent(id)}`)); setFindingState({ loading: false, error: "" }); } catch (e) { setFinding(null); setFindingState({ loading: false, error: e.message }); } };
+  // The loaders intentionally remain local to this component so they can be retried from the UI.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (scanId) loadSummary(scanId); }, [scanId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (view === "findings" && scanId) loadFindings(scanId, page); }, [view, scanId, page]);
+  const navigate = (next) => { setView(next); setFinding(null); setFindingId(null); setMenu(false); };
+  const submitScan = (e) => { e.preventDefault(); if (!input.trim()) return; setScanId(input.trim()); setPage(0); setFilters({ severity: "", status: "" }); navigate("overview"); };
+  const selectFinding = (id) => { setFindingId(id); setView("detail"); loadFinding(id); };
+  const content = !scanId ? <State><h2>Load a scan to begin</h2><p>Enter a scan ID above to open its risk dashboard.</p></State> : view === "overview" ? summaryState.loading ? <State>Loading dashboard data…</State> : summaryState.error ? <Retry message={summaryState.error} retry={() => loadSummary()} /> : <Overview summary={summary} openFindings={() => navigate("findings")} /> : view === "findings" ? <Findings data={data} loading={findingsState.loading} error={findingsState.error} page={page} next={(page + 1) * 20 < data.total} setPage={setPage} select={selectFinding} filters={filters} setFilters={setFilters} retry={() => loadFindings()} /> : <Detail finding={finding} loading={findingState.loading} error={findingState.error} back={() => navigate("findings")} retry={() => loadFinding(findingId)} />;
+  return <div className="shell"><button className="mobile-menu" onClick={() => setMenu(!menu)} aria-label="Toggle navigation">☰</button>{menu && <button className="scrim" onClick={() => setMenu(false)} aria-label="Close navigation" />}<aside className={`sidebar ${menu ? "open" : ""}`}><div className="brand"><span>⌁</span><div><b>Sentinel</b><small>API security workspace</small></div></div><nav><button className={view === "overview" ? "active" : ""} onClick={() => navigate("overview")}>◈ <span>Overview</span></button><button className={view !== "overview" ? "active" : ""} onClick={() => navigate("findings")}>⌕ <span>Findings</span></button></nav><footer><i /> Controlled lab mode</footer></aside><main className="main"><header><form onSubmit={submitScan}><label htmlFor="scan-id">Selected scan</label><input id="scan-id" value={input} onChange={(e) => setInput(e.target.value)} placeholder="Enter scan ID" inputMode="numeric" /><button className="button primary">Load scan</button></form>{scanId && <span className="scan-context">Scan #{scanId}</span>}</header><div className="content">{content}</div></main></div>;
 }
 
 export default App;
-

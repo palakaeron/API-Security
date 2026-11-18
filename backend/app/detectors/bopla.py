@@ -29,7 +29,14 @@ of a ``support_pin`` field is a reliable indicator for this specific lab).
 
 from __future__ import annotations
 
-from app.detectors.base import DetectorResult, Evidence, OWASPCategory, Severity
+from app.detectors.base import (
+    DetectorIssue,
+    DetectorIssueCode,
+    DetectorResult,
+    Evidence,
+    OWASPCategory,
+    Severity,
+)
 from app.detectors.http_client import controlled_get, controlled_patch
 from app.detectors.sanitiser import sanitise_body, sanitise_headers
 from app.security.target_allowlist import TargetPolicy
@@ -157,6 +164,41 @@ class BoplaDetector:
             max_severity = Severity.CRITICAL
 
         vulnerable = bool(findings)
+        issues: list[DetectorIssue] = []
+        if read_sensitive_exposed:
+            issues.append(
+                DetectorIssue(
+                    issue_code=DetectorIssueCode.BOPLA_SENSITIVE_PROPERTY_READ,
+                    title=f"BOPLA: sensitive properties exposed on {read_path}",
+                    detail=(
+                        f"Sensitive fields {read_sensitive_exposed!r} were returned "
+                        "to a non-owner by the GET probe."
+                    ),
+                    vulnerable=True,
+                    severity=Severity.HIGH,
+                    confidence=80.0,
+                    evidence=[all_evidence[0]],
+                    endpoint_path=read_path,
+                    endpoint_method="GET",
+                )
+            )
+        if write_escalated:
+            issues.append(
+                DetectorIssue(
+                    issue_code=DetectorIssueCode.BOPLA_PROPERTY_PRIVILEGE_ESCALATION,
+                    title=f"BOPLA: privileged property modification on {write_path}",
+                    detail=(
+                        "A non-owner successfully changed the privileged role "
+                        "property through the PATCH probe."
+                    ),
+                    vulnerable=True,
+                    severity=Severity.CRITICAL,
+                    confidence=95.0,
+                    evidence=[all_evidence[1]],
+                    endpoint_path=write_path,
+                    endpoint_method="PATCH",
+                )
+            )
         return DetectorResult(
             detector_id=self.DETECTOR_ID,
             owasp_category=self.OWASP_CATEGORY,
@@ -175,4 +217,5 @@ class BoplaDetector:
                 if findings
                 else "Read returned only public fields; write was rejected or field ignored."
             ),
+            issues=issues,
         )

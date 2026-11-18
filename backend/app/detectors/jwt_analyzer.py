@@ -47,7 +47,14 @@ from datetime import UTC, datetime
 
 import jwt as pyjwt
 
-from app.detectors.base import DetectorResult, Evidence, OWASPCategory, Severity
+from app.detectors.base import (
+    DetectorIssue,
+    DetectorIssueCode,
+    DetectorResult,
+    Evidence,
+    OWASPCategory,
+    Severity,
+)
 from app.detectors.http_client import controlled_get, controlled_post_raw
 from app.detectors.sanitiser import sanitise_headers
 from app.security.target_allowlist import TargetPolicy
@@ -181,6 +188,7 @@ class JwtAnalyzer:
                 title=f"JWT analyzer: could not obtain token from {auth_path} (HTTP {ts})",
                 remediation_ref=self.REMEDIATION_REF,
                 detail="Token acquisition failed; no JWT checks could be run.",
+                status="inconclusive",
             )
 
         token: str = tb["access_token"]
@@ -322,6 +330,65 @@ class JwtAnalyzer:
             max_confidence = max(max_confidence, 75.0)
 
         vulnerable = bool(findings)
+        issues: list[DetectorIssue] = []
+        if cracked_secret is not None:
+            issues.append(
+                DetectorIssue(
+                    issue_code=DetectorIssueCode.JWT_WEAK_SIGNING_SECRET,
+                    title="JWT signing secret is weak",
+                    detail=findings[0],
+                    vulnerable=True,
+                    severity=Severity.HIGH,
+                    confidence=100.0,
+                    evidence=[all_evidence[1]],
+                    endpoint_path=auth_path,
+                    endpoint_method="POST",
+                )
+            )
+        if ns < 400:
+            issues.append(
+                DetectorIssue(
+                    issue_code=DetectorIssueCode.JWT_ALG_NONE_ACCEPTED,
+                    title="JWT algorithm-none token accepted",
+                    detail="The protected endpoint accepted an unsigned JWT.",
+                    vulnerable=True,
+                    severity=Severity.CRITICAL,
+                    confidence=100.0,
+                    evidence=[all_evidence[2]],
+                    endpoint_path=protected_path,
+                    endpoint_method="GET",
+                )
+            )
+        if excessive_expiry:
+            issues.append(
+                DetectorIssue(
+                    issue_code=DetectorIssueCode.JWT_EXCESSIVE_EXPIRY,
+                    title="JWT expiry is excessive",
+                    detail=findings[next(i for i, item in enumerate(findings) if "expiry" in item)],
+                    vulnerable=True,
+                    severity=Severity.MEDIUM,
+                    confidence=85.0,
+                    evidence=[all_evidence[3]],
+                    endpoint_path=auth_path,
+                    endpoint_method="POST",
+                )
+            )
+        if missing_claims:
+            issues.append(
+                DetectorIssue(
+                    issue_code=DetectorIssueCode.JWT_MISSING_REQUIRED_CLAIMS,
+                    title="JWT is missing required claims",
+                    detail=findings[
+                        next(i for i, item in enumerate(findings) if "missing JWT claims" in item)
+                    ],
+                    vulnerable=True,
+                    severity=Severity.MEDIUM,
+                    confidence=75.0,
+                    evidence=[all_evidence[4]],
+                    endpoint_path=auth_path,
+                    endpoint_method="POST",
+                )
+            )
         return DetectorResult(
             detector_id=self.DETECTOR_ID,
             owasp_category=self.OWASP_CATEGORY,
@@ -336,4 +403,5 @@ class JwtAnalyzer:
             ),
             remediation_ref=self.REMEDIATION_REF,
             detail="\n".join(findings) if findings else "No JWT security issues detected.",
+            issues=issues,
         )
