@@ -1,9 +1,13 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.config import get_settings
-from app.database import get_engine
+from app.database import get_engine, get_session_factory
+from app.models import Api
+from app.routers import apis, projects
 
 settings = get_settings()
 
@@ -34,6 +38,22 @@ app = FastAPI(
     version="0.1.0",
 )
 
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """Return validation details without echoing untrusted request values."""
+    del request
+    detail = [
+        {key: error[key] for key in ("type", "loc", "msg") if key in error}
+        for error in exc.errors()
+    ]
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": detail},
+    )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
@@ -41,6 +61,15 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+app.include_router(projects.router)
+app.include_router(apis.router)
+
+
+def _require_api_exists(api_id: int) -> None:
+    with get_session_factory(settings.database_url)() as database:
+        if database.get(Api, api_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="api not found")
 
 
 @app.get("/health", tags=["system"])
@@ -61,6 +90,7 @@ def import_discovery(request: DiscoveryImportRequest) -> dict[str, int | str]:
             detail="format must be 'openapi' or 'postman'",
         )
     source = "spec" if fmt == "openapi" else "postman"
+    _require_api_exists(request.api_id)
     try:
         endpoints = (
             parse_openapi(request.content) if source == "spec" else parse_postman(request.content)
@@ -88,6 +118,7 @@ def record_traffic(request: TrafficRecordRequest) -> dict[str, int]:
     from app.discovery.models import DiscoveredEndpoint
     from app.discovery.persistence import import_endpoints
 
+    _require_api_exists(request.api_id)
     valid_methods = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
     endpoints = []
     for obs in request.observations:

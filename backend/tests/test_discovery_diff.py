@@ -197,6 +197,22 @@ def client(tmp_path, monkeypatch):
     engine = _ce(db_url)
     disc_meta.create_all(engine)
 
+    from app.models import Api, Project, User
+    from sqlalchemy.orm import Session
+
+    with Session(engine) as session:
+        owner = User(email="discovery-owner@example.test", password_hash="synthetic-hash")
+        project = Project(name="Discovery Project", owner=owner)
+        session.add(project)
+        session.flush()
+        session.add_all(
+            [
+                Api(id=api_id, project_id=project.id, name=f"Discovery API {api_id}")
+                for api_id in range(1, 6)
+            ]
+        )
+        session.commit()
+
     # Patch the module-level settings object so all endpoint functions use the
     # temp DB URL when they call create_engine(settings.database_url).
     import app.main as main_module

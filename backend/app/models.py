@@ -75,7 +75,9 @@ class Project(Base):
 
     owner: Mapped[User] = relationship(back_populates="owned_projects")
     organization: Mapped[Organization | None] = relationship(back_populates="projects")
-    apis: Mapped[list[Api]] = relationship(back_populates="project")
+    apis: Mapped[list[Api]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
 
 
 class Api(Base):
@@ -88,14 +90,21 @@ class Api(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     version: Mapped[str | None] = mapped_column(String(64))
     spec_location: Mapped[str | None] = mapped_column(String(500))
+    base_url: Mapped[str | None] = mapped_column(String(2048))
+    description: Mapped[str | None] = mapped_column(Text)
+    environment: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.current_timestamp()
     )
 
     project: Mapped[Project] = relationship(back_populates="apis")
-    endpoints: Mapped[list[Endpoint]] = relationship(back_populates="api")
-    scans: Mapped[list[Scan]] = relationship(back_populates="api")
-    scan_history: Mapped[list[ScanHistory]] = relationship(back_populates="api")
+    endpoints: Mapped[list[Endpoint]] = relationship(
+        back_populates="api", cascade="all, delete-orphan"
+    )
+    scans: Mapped[list[Scan]] = relationship(back_populates="api", cascade="all, delete-orphan")
+    scan_history: Mapped[list[ScanHistory]] = relationship(
+        back_populates="api", cascade="all, delete-orphan"
+    )
 
 
 class Endpoint(Base):
@@ -144,7 +153,9 @@ class Scan(Base):
     job_id: Mapped[str | None] = mapped_column(String(255))
 
     api: Mapped[Api] = relationship(back_populates="scans")
-    findings: Mapped[list[Finding]] = relationship(back_populates="scan")
+    findings: Mapped[list[Finding]] = relationship(
+        back_populates="scan", cascade="all, delete-orphan"
+    )
 
 
 class Finding(Base):
@@ -183,9 +194,15 @@ class Finding(Base):
 
     scan: Mapped[Scan] = relationship(back_populates="findings")
     endpoint: Mapped[Endpoint | None] = relationship(back_populates="findings")
-    evidence: Mapped[list[Evidence]] = relationship(back_populates="finding")
-    remediation: Mapped[list[Remediation]] = relationship(back_populates="finding")
-    alerts: Mapped[list[Alert]] = relationship(back_populates="finding")
+    evidence: Mapped[list[Evidence]] = relationship(
+        back_populates="finding", cascade="all, delete-orphan"
+    )
+    remediation: Mapped[list[Remediation]] = relationship(
+        back_populates="finding", cascade="all, delete-orphan"
+    )
+    alerts: Mapped[list[Alert]] = relationship(
+        back_populates="finding", cascade="all, delete-orphan"
+    )
 
 
 class Evidence(Base):

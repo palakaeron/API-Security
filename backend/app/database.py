@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from functools import lru_cache
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -27,7 +27,16 @@ def get_engine(database_url: str | None = None) -> Engine:
     """Return a shared engine for the configured or supplied database URL."""
 
     url = database_url or get_settings().database_url
-    return create_engine(url, **_engine_kwargs(url))
+    engine = create_engine(url, **_engine_kwargs(url))
+    if url.startswith("sqlite"):
+
+        @event.listens_for(engine, "connect")
+        def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+
+    return engine
 
 
 @lru_cache(maxsize=8)
